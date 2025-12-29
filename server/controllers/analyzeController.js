@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { SAFETY_SYSTEM_PROMPT } from '../utils/prompts.js';
 
 // Logic for analyzing text - handles communication with ChatGPT
 export const analyzeText = async (req, res) => {
@@ -27,7 +28,7 @@ export const analyzeText = async (req, res) => {
         const response = await openai.chat.completions.create({
             model: "gpt-3.5-turbo",
             messages: [
-                { role: "system", content: "You are a safety assistant. Analyze the text for danger." },
+                { role: "system", content: SAFETY_SYSTEM_PROMPT },
                 { role: "user", content: text }
             ],
         });
