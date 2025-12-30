@@ -132,3 +132,27 @@ Contains the Node.js / Express backend application.
 For any issues please contact us via [mail](mailto:queenb.community@gmail.com) or open an issue.
 
 **Happy Coding! :)**
+
+
+ - UPDATE 20/12 - PrivacyShield
+ 
+ Backend Status & Implementation
+1. Environment & Dependencies
+Core Packages: Installed openai and dotenv.
+Important: Run npm install in the /server directory after pulling.
+Security: Configured .env for API key management.
+
+2. Architecture (MVC Pattern)
+Server Setup: Configured server.js to handle requests and middleware.
+Routing: Created analyzeRoutes.js to manage API endpoints.
+Controller: Implemented analyzeController.js to handle the logic for sending strings to the LLM.
+
+3. AI Logic & Integration
+Prompt Management: Extracted AI instructions to utils/prompts.js for easier updates.
+String Processing: The API currently receives a String from the frontend, processes it via OpenAI, and returns the response.
+Mock Strategy: Implemented a check for the API key. If a placeholder key is detected, the server returns a predefined Mock String response. This allows frontend development to continue without a paid API credit.
+
+**  Commands to start:
+cd server
+npm install
+npm run dev
