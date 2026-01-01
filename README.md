@@ -171,25 +171,3 @@ Backend Status & Implementation
 cd server
 npm install
 npm run dev
-
-## link scanner backend
-
-### API Endpoint
-
-**POST** `/api/link-scanner/analyze`
-
----
-
-### Request Body
-
-```json
-{
-  "url": "https://example.com/suspicious-link",
-  "conversation": [
-    {
-      "role": "user",
-      "content": "I received this link via Instagram DM"
-    }
-  ]
-}
-```

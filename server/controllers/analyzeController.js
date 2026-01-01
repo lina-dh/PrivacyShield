@@ -50,6 +50,46 @@ const MOCK_JSON = (url) => ({
   debug: { assumptions: [], missingInfo: [] },
 });
 
+// schema-valid response when no URL exists in the message
+const NO_URL_JSON = (lang) => ({
+  version: "1.0",
+  tool: "link_scanner",
+  input: { url: null },
+  result: {
+    verdict: "safe",
+    confidence: 100,
+    riskScore: 0,
+    reasons: [
+      lang === "he"
+        ? "לא נמצא קישור בהודעה."
+        : "No link was found in the message.",
+    ],
+    detectedSignals: {
+      veryLongUrl: false,
+      manySpecialChars: false,
+      ipAddressInDomain: false,
+      looksLikeBrandImpersonation: false,
+      suspiciousTld: false,
+      shortenedUrl: false,
+    },
+  },
+  advice: {
+    summary:
+      lang === "he"
+        ? "לא נמצא קישור לסריקה בהודעה."
+        : "No link detected to scan.",
+    twoQuickSteps: [
+      lang === "he"
+        ? "אם תקבלי קישור, הדביקי אותו כאן או שלחי את ההודעה שוב."
+        : "If you receive a link later, paste it here or resend the message.",
+      lang === "he"
+        ? "היזהרי מהודעות ממשתמשים לא מוכרים."
+        : "Be cautious with messages from unknown senders.",
+    ],
+  },
+  debug: { assumptions: [], missingInfo: [] },
+});
+
 function safeParseJson(text) {
   const first = text.indexOf("{");
   const last = text.lastIndexOf("}");
@@ -79,8 +119,15 @@ function capMessageLengths(messages, maxLen = 2000) {
   }));
 }
 
+// extract URLs from a message (supports multiple links)
+function extractUrlsFromText(text) {
+  if (typeof text !== "string") return [];
+  // captures http(s) URLs until whitespace or quotes/brackets
+  const urlRegex = /https?:\/\/[^\s"'<>]+/g;
+  return text.match(urlRegex) || [];
+}
+
 // normalize & validate URL (soft validation)
-// normalize the input because users may paste URLs without protocol - always assume the worst
 function normalizeAndValidateUrl(inputUrl) {
   const raw = String(inputUrl ?? "").trim();
 
@@ -88,7 +135,6 @@ function normalizeAndValidateUrl(inputUrl) {
     return { ok: false, status: 400, error: "No URL provided" };
   }
 
-  // Limit to prevent very long inputs / token blowups
   const MAX_URL_LENGTH = 2048;
   if (raw.length > MAX_URL_LENGTH) {
     return {
@@ -98,12 +144,10 @@ function normalizeAndValidateUrl(inputUrl) {
     };
   }
 
-  // Allow users to paste without protocol by auto-adding https://
   const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 
   try {
     const parsed = new URL(withProtocol);
-    // Basic check: must have hostname
     if (!parsed.hostname) throw new Error("Missing hostname");
     return { ok: true, url: withProtocol };
   } catch {
@@ -115,13 +159,67 @@ function normalizeAndValidateUrl(inputUrl) {
   }
 }
 
-// Link Scanner controller
+// validate incoming MESSAGE (not URL)
+function normalizeAndValidateMessage(inputMessage) {
+  const msg = String(inputMessage ?? "").trim();
+
+  if (!msg) {
+    return { ok: false, status: 400, error: "No message provided" };
+  }
+
+  // Prevent extremely long message payloads
+  const MAX_MESSAGE_LENGTH = 5000;
+  if (msg.length > MAX_MESSAGE_LENGTH) {
+    return {
+      ok: false,
+      status: 413,
+      error: `Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`,
+    };
+  }
+
+  return { ok: true, message: msg };
+}
+
+// Link Scanner controller (now receives a MESSAGE that contains URL(s))
 export const analyzeLink = async (req, res) => {
   try {
-    const { url, conversation } = req.body;
+    const { message, conversation } = req.body;
 
-    // Validation: normalize + length limit + URL parsing
-    const urlCheck = normalizeAndValidateUrl(url);
+    // Validate incoming message
+    const msgCheck = normalizeAndValidateMessage(message);
+    if (!msgCheck.ok) {
+      return res.status(msgCheck.status).json({
+        success: false,
+        error: msgCheck.error,
+      });
+    }
+    const normalizedMessage = msgCheck.message;
+
+    // Extract URLs from the message
+    const urls = extractUrlsFromText(normalizedMessage);
+
+    // Detect language using conversation + message
+    const history = trimConversation(conversation);
+    const combinedUserText = [
+      ...history.filter((m) => m.role === "user").map((m) => m.content),
+      normalizedMessage,
+    ].join(" ");
+
+    const lang = detectLanguage(combinedUserText);
+
+    // If no URL found, return schema-valid safe response (no crash)
+    if (urls.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: NO_URL_JSON(lang),
+      });
+    }
+
+    // MVP: analyze the first URL
+    const urlToAnalyze = urls[0];
+
+    // Validate URL before sending to AI
+    const urlCheck = normalizeAndValidateUrl(urlToAnalyze);
     if (!urlCheck.ok) {
       return res.status(urlCheck.status).json({
         success: false,
@@ -141,16 +239,6 @@ export const analyzeLink = async (req, res) => {
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // build messages with system prompts and trimmed conversation
-    const history = trimConversation(conversation);
-
-    const combinedUserText = history
-      .filter((m) => m.role === "user")
-      .map((m) => m.content)
-      .join(" ");
-
-    const lang = detectLanguage(combinedUserText || normalizedUrl);
-
     let messages = [
       { role: "system", content: SAFETY_SYSTEM_PROMPT },
       { role: "system", content: LINK_SCANNER_JSON_SCHEMA_PROMPT },
@@ -162,11 +250,13 @@ Return all TEXT VALUES in this language, but keep JSON keys in English exactly.`
       ...history,
       {
         role: "user",
-        content: `Scan this URL and return JSON only:\n${normalizedUrl}`,
+        content:
+          `The user pasted this message:\n` +
+          normalizedMessage +
+          `\n\nExtract the most relevant URL from it (already provided below) and analyze it.\nURL: ${normalizedUrl}\n\nReturn JSON only.`,
       },
     ];
 
-    // Validation: cap message lengths so weird huge content can't blow up
     messages = capMessageLengths(messages, 2000);
 
     const response = await openai.chat.completions.create({
