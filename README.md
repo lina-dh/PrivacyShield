@@ -134,8 +134,8 @@ For any issues please contact us via [mail](mailto:queenb.community@gmail.com) o
 **Happy Coding! :)**
 
 
- - UPDATE 20/12 - PrivacyShield
- 
+ - UPDATE 30/12 - PrivacyShield
+
  Backend Status & Implementation
 1. Environment & Dependencies
 Core Packages: Installed openai and dotenv.
