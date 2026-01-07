@@ -50,6 +50,13 @@ export default function HomePage() {
           art={<ArtClipboard />}
         />
       </div>
+
+      <Link to="/consult" className="ai-fab" aria-label="Open Consult AI">
+        <span className="ai-fab__robot" aria-hidden="true">
+          🤖
+        </span>
+        <span className="ai-fab__text">Consult AI</span>
+      </Link>
     </section>
   );
 }
