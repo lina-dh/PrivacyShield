@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import {
   SAFETY_SYSTEM_PROMPT,
   LINK_SCANNER_JSON_SCHEMA_PROMPT,
-} from "../utils/prompts.js";
+} from "../utils/prompts/analyzerPrompts.js";
 
 // --- helpers ---
 
