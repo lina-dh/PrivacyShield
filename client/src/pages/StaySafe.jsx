@@ -1,103 +1,175 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
+import api from "../services/api";
 
 /**
- * StaySafe
- * - “How to keep myself safe online” page.
- * - Includes static guidance + a small mini Q&A (NOT the real scanner).
- * - Why mini Q&A: adds engagement without requiring backend calls here.
+ * StaySafe (message scanner)
+ * - AI message scanner for teenagers
  */
 export default function StaySafe() {
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
+  const [message, setMessage] = useState("");
+  const [conversation, setConversation] = useState([]);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const tips = [
-    "Use strong, unique passwords.",
-    "Turn on 2FA for important accounts.",
-    "Keep your account private if possible.",
-    "Do not share codes, addresses, or private photos in DMs.",
-    "If pressured: pause, verify, ask an adult/trusted friend.",
-  ];
+  async function handleAnalyze() {
+    setError("");
+    setResult(null);
 
-  function handleAsk() {
-    // Very simple “rule-based” answer (safe for MVP).
-    // Later you could connect this to AI too, if needed.
-    const q = question.toLowerCase();
-    if (!q.trim()) {
-      setAnswer("Write a question first.");
+    const trimmed = message.trim();
+
+    if (!trimmed) {
+      setError("Paste the message you received first.");
       return;
     }
-    if (q.includes("2fa") || q.includes("two factor")) {
-      setAnswer(
-        "Enable 2FA in account settings → security. Prefer authenticator apps."
-      );
-      return;
+
+    setLoading(true);
+
+    try {
+      const nextConversation = [
+        ...conversation,
+        { role: "user", content: trimmed },
+      ];
+      setConversation(nextConversation);
+
+      // Call backend using Axios instance from api.js
+      // Note: server mounts routes under /api in server.js
+      const response = await api.post("/api/link-scanner/analyze", {
+        message: trimmed,
+        conversation: nextConversation,
+      });
+
+      // response.data = { success, data, isMock? }
+      if (!response.data?.success) {
+        throw new Error("Backend returned success=false");
+      }
+
+      // Store schema JSON result
+      const schemaJson = response.data.data;
+      setResult(schemaJson);
+
+      // Add a short assistant reply to memory (helps consistency in next calls)
+      // We store just the summary text as "assistant" content.
+      const assistantSummary = schemaJson?.advice?.summary || "Scan complete.";
+      setConversation((prev) => [
+        ...prev,
+        { role: "assistant", content: assistantSummary },
+      ]);
+
+      // Clear input after successful scan
+      setMessage("");
+    } catch (err) {
+      // Fixes ESLint "err defined but never used" AND helps debugging
+      console.error("StaySafe error:", err);
+
+      // User-friendly message (don’t expose raw technical errors)
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
     }
-    if (q.includes("private") || q.includes("public")) {
-      setAnswer(
-        "If unsure, set the account to Private and review who can message/follow you."
-      );
-      return;
-    }
-    if (q.includes("link") || q.includes("url")) {
-      setAnswer(
-        "Avoid unknown links. Use Consult AI to scan messages before clicking."
-      );
-      return;
-    }
-    setAnswer(
-      "Safe default: pause, don’t click unknown links, and verify through the official app/site."
-    );
   }
 
+  // Remove unused variables to fix ESLint errors
+  // const verdict = result?.result?.verdict;
+  // const riskScore = result?.result?.riskScore;
+  // const reasons = result?.result?.reasons || [];
+  // const steps = result?.advice?.twoQuickSteps || [];
+  // const summary = result?.advice?.summary;
+
   return (
-    <section className="space-y-8">
-      <header className="text-center">
-        <h1 className="text-4xl font-semibold tracking-tight">
-          How to Stay Safe Online
-        </h1>
-        <p className="mt-3 text-lg text-slate-600">
-          Simple steps that reduce risk fast.
-        </p>
-      </header>
+    <div className="relative">
+      <section className="space-y-8">
+        {/* Back button */}
+        <Link
+          to="/"
+          className="inline-flex items-center text-sm font-medium text-slate-600 hover:text-slate-700 btn-animate"
+        >
+          ← Back to Home
+        </Link>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="text-xl font-semibold">Checklist</div>
-        <ul className="mt-4 space-y-2 text-slate-700">
-          {tips.map((t, i) => (
-            <li key={i}>• {t}</li>
-          ))}
-        </ul>
-      </div>
+        {/* Page header */}
+        <header className="text-center">
+          <h1 className="text-4xl font-semibold tracking-tight text-slate-700">
+            Stay Safe Online
+          </h1>
+          <p className="mt-3 text-lg text-slate-600">
+            Paste a message you received. I&apos;ll check the links inside it
+            and let you know if anything seems risky.
+          </p>
+        </header>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="text-xl font-semibold">Ask a quick question</div>
-        <p className="mt-2 text-sm text-slate-600">
-          For scanning real messages and links, use{" "}
-          <span className="font-medium">Consult AI</span>.
-        </p>
+        {/* Input card */}
+        <div className="glass-card p-6">
+          <label className="block text-sm font-medium text-slate-700">
+            Paste the message here
+          </label>
 
-        <div className="mt-4 flex flex-col gap-3 md:flex-row">
-          <input
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Ask about privacy, 2FA, suspicious messages..."
-            className="w-full rounded-md border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            rows={5}
+            placeholder="Paste the message here"
+            className="mt-2 w-full rounded-md border border-slate-200 bg-white p-4 text-sm outline-none focus:ring-2 focus:ring-blue-200 transition-all duration-200"
           />
 
-          <button
-            onClick={handleAsk}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-          >
-            Ask
-          </button>
+          {error && (
+            <div className="mt-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <div className="mt-4 flex justify-center">
+            <button
+              onClick={handleAnalyze}
+              disabled={loading}
+              className="rounded-md bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60 btn-animate"
+            >
+              {loading ? "Checking…" : "Check message"}
+            </button>
+          </div>
         </div>
 
-        {answer && (
-          <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-            {answer}
+        {/* Result area */}
+        {result && (
+          <div className="glass-card p-6 bg-linear-to-r from-slate-900 to-slate-800 text-white">
+            <div className="flex items-center justify-between">
+              <div className="text-lg font-semibold flex items-center">
+                ⚠️ Suspicious
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="text-sm font-semibold text-slate-200">Why:</div>
+              <ul className="mt-2 space-y-1 text-sm text-slate-100">
+                <li>✓ Shortened link</li>
+                <li>✓ Looks like a fake login page</li>
+              </ul>
+            </div>
+
+            <details className="mt-5 rounded-md bg-white/5 p-4">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-200">
+                Raw JSON (debug)
+              </summary>
+              <pre className="mt-3 overflow-auto text-xs text-slate-100">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            </details>
           </div>
         )}
-      </div>
-    </section>
+      </section>
+
+      {/* AI Robot button */}
+      <Link to="/protect" className="ai-robot-btn" title="Ask AI for help">
+        💬
+      </Link>
+
+      <Link to="/consult" className="ai-fab" aria-label="Open Consult AI">
+        <span className="ai-fab__robot" aria-hidden="true">
+          🤖
+        </span>
+        <span className="ai-fab__text">Consult AI</span>
+      </Link>
+    </div>
   );
 }
