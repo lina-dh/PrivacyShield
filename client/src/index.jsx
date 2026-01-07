@@ -1,14 +1,15 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './styles/global.css'; 
-import App from './App.jsx';
-import { DuckProvider } from './context/DuckContext';
+import React from "react";
+import ReactDOM from "react-dom/client";
+import "./styles/global.css";
+import App from "./App.jsx";
+import { DuckProvider } from "./context/DuckContext";
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>
+    {/* DuckProvider stays for now to avoid breaking template logic */}
     <DuckProvider>
-      <App /> 
+      <App />
     </DuckProvider>
   </React.StrictMode>
 );
