@@ -1,11 +1,12 @@
-import express from "express";
-import path from "path";
-import { fileURLToPath } from "url";
-import cors from "cors";
-import dotenv from "dotenv";
-import rubberDuckRoutes from "./routes/rubberDucks.js"; // Import the routes
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import rubberDuckRoutes from './routes/rubberDucks.js'; // Import the routes
 
-import analyzeRoutes from "./routes/analyzeRoutes.js"; // Import our new PrivacyShield routes
+import analyzeRoutes from './routes/analyzeRoutes.js'; // Import our new PrivacyShield routes
+import advisorRoutes from './routes/advisorRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,7 +28,8 @@ app.use(
 app.use("/ducks", rubberDuckRoutes);
 
 // Connect our new API routes to the /api prefix
-app.use("/api", analyzeRoutes);
+app.use('/api', analyzeRoutes);
+app.use('/api/advisor', advisorRoutes);
 
 // Start server
 const PORT = process.env.PORT;
