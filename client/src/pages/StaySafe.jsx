@@ -159,11 +159,6 @@ export default function StaySafe() {
         )}
       </section>
 
-      {/* AI Robot button */}
-      <Link to="/protect" className="ai-robot-btn" title="Ask AI for help">
-        💬
-      </Link>
-
       <Link to="/consult" className="ai-fab" aria-label="Open Consult AI">
         <span className="ai-fab__robot" aria-hidden="true">
           🤖
