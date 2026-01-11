@@ -1,3 +1,12 @@
+// הוספה חדשה: ספריות לניהול הרצת קובץ הפייתון
+import { spawn } from "child_process";
+import path from "path";
+import { fileURLToPath } from "url";
+
+// הגדרת משתנים לזיהוי תיקיות (כי אנחנו ב-ES Modules)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // imports the OpenAI client so the backend can communicate with the OpenAI API
 import OpenAI from "openai";
 import {
@@ -10,6 +19,50 @@ import {
 function detectLanguage(text) {
   // Hebrew unicode range
   return /[\u0590-\u05FF]/.test(text) ? "he" : "en";
+}
+
+// --- New Helper: Run XGBoost Model ---
+// פונקציה זו מריצה את הפייתון ומחזירה הבטחה (Promise) עם הציון
+async function getRiskScoreFromModel(url) {
+  return new Promise((resolve) => {
+    try {
+      // 1. איתור קובץ הפייתון
+      // אנחנו עולים תיקייה אחת למעלה (..) ואז נכנסים ל-XGBOOST_model
+      const pythonScriptPath = path.join(__dirname, '..', '..', 'XGBOOST_model', 'predict.py');
+      
+      console.log(`Analyzing URL with XGBoost: ${url}`);
+      
+      // 2. הרצת התהליך
+      const pythonProcess = spawn('python', [pythonScriptPath, url]);
+      
+      let resultData = "";
+
+      // 3. איסוף המידע שהפייתון מדפיס
+      pythonProcess.stdout.on('data', (data) => {
+        resultData += data.toString();
+      });
+
+      pythonProcess.stderr.on('data', (data) => {
+        console.error(`Python Error: ${data}`);
+      });
+
+      // 4. סיום התהליך
+      pythonProcess.on('close', (code) => {
+        if (code !== 0) {
+          console.log("Model failed or crashed, defaulting to score 0");
+          resolve(0); // במקרה של שגיאה, נחזיר 0 ולא נתקע את התוכנה
+        } else {
+          // מנסים להמיר למספר
+          const score = parseFloat(resultData.trim());
+          // אם זה לא מספר (NaN) נחזיר 0
+          resolve(isNaN(score) ? 0 : score);
+        }
+      });
+    } catch (error) {
+      console.error("Error launching python model:", error);
+      resolve(0); // בכל מקרה של תקלה קריטית, נחזיר 0
+    }
+  });
 }
 
 const isMockMode = () =>
@@ -228,6 +281,14 @@ export const analyzeLink = async (req, res) => {
     }
     const normalizedUrl = urlCheck.url;
 
+    //Callong XGBOOST MODEL
+    let xgboostScore = 0;
+    // נדלג על זה אם אנחנו במצב Mock כדי לחסוך זמן פיתוח
+    if (!isMockMode()) { 
+        xgboostScore = await getRiskScoreFromModel(normalizedUrl);
+        console.log(`Final XGBoost Score for AI: ${xgboostScore}`);
+    }
+
     // Mock mode returns JSON in the SAME SHAPE
     if (isMockMode()) {
       return res.status(200).json({
@@ -244,8 +305,13 @@ export const analyzeLink = async (req, res) => {
       { role: "system", content: LINK_SCANNER_JSON_SCHEMA_PROMPT },
       {
         role: "user",
-        content: `Language preference: ${lang === "he" ? "Hebrew" : "English"}.
-Return all TEXT VALUES in this language, but keep JSON keys in English exactly.`,
+        content:
+          `The user pasted this message:\n` +
+          normalizedMessage +
+          `\n\nExtract the most relevant URL from it (already provided below) and analyze it.` +
+          `\nURL: ${normalizedUrl}` +
+          `\n\nEXTERNAL SECURITY MODEL SCORE: ${xgboostScore} (Scale 0-1, where 1 is highly malicious). Take this score into account for your verdict.` +
+          `\n\nReturn JSON only.`,
       },
       ...history,
       {

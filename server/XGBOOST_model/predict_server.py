@@ -1,90 +1,110 @@
+# server/XGBOOST_model/predict_server.py
 import sys
+import os
+import json
+import math
 import pandas as pd
 import xgboost as xgb
-import json
-import os
-import re
+from urllib.parse import urlparse
 
-# --- פונקציית הפיצ'רים (חייבת להיות זהה לזו שבאימון) ---
+# --- 1. חילוץ תכונות למודל ---
+def calculate_entropy(text):
+    if not text: return 0
+    prob = [float(text.count(c)) / len(text) for c in dict.fromkeys(list(text))]
+    return -sum(p * math.log(p) / math.log(2.0) for p in prob)
+
 def extract_features(url):
-    url = str(url).lower()
-    features = []
+    features = {}
+    url_lower = url.lower()
     
-    # מבנה ה-URL
-    features.append(len(url))
-    features.append(url.count('.'))
-    features.append(url.count('-'))
-    features.append(url.count('@'))
-    features.append(url.count('%'))
-    features.append(url.count('/'))
+    sus_tlds = ['.xyz', '.top', '.club', '.win', '.info', '.gq', '.tk', '.ml', '.ga', '.cf']
+    shorteners = ['bit.ly', 'tinyurl.com', 'goo.gl', 'ow.ly', 't.co', 'is.gd', 'buff.ly']
+    sus_keywords = ['login', 'verify', 'update', 'account', 'secure', 'banking', 'confirm']
+    brands = ['google', 'facebook', 'apple', 'paypal', 'microsoft', 'netflix', 'amazon']
+    dangerous_ext = ['.exe', '.zip', '.rar', '.tar', '.7z', '.js', '.vbs']
 
-    # סטטיסטיקה
+    features['len'] = len(url)
+    features['dots'] = url.count('.')
+    features['hyphens'] = url.count('-')
+    features['at_symbol'] = url.count('@')
+    features['percent'] = url.count('%')
+    features['slashes'] = url.count('/')
     digits = sum(c.isdigit() for c in url)
-    letters = sum(c.isalpha() for c in url)
-    features.append(digits / (letters + 1) if letters > 0 else 0)
+    features['digit_ratio'] = digits / len(url) if len(url) > 0 else 0
+    features['entropy'] = calculate_entropy(url)
+    features['is_sus_tld'] = 1 if any(url_lower.endswith(tld) for tld in sus_tlds) else 0
+    features['is_shortener'] = 1 if any(short in url_lower for short in shorteners) else 0
+    features['sus_keywords'] = sum(1 for word in sus_keywords if word in url_lower)
+    features['brands'] = sum(1 for brand in brands if brand in url_lower)
+    features['dangerous_ext'] = 1 if any(url_lower.endswith(ext) for ext in dangerous_ext) else 0
+    features['is_https'] = 1 if url_lower.startswith('https') else 0
+    features['has_www'] = 1 if 'www.' in url_lower else 0
+
+    columns = ["len","dots","hyphens","at_symbol","percent","slashes","digit_ratio",
+               "entropy","is_sus_tld","is_shortener","sus_keywords","brands",
+               "dangerous_ext","is_https","has_www"]
+    return pd.DataFrame([features], columns=columns)
+
+# --- 2. מנגנון חוקים (החלק החדש!) ---
+def apply_heuristics(url, model_score):
+    """
+    פונקציה זו מתקנת את הציון אם המודל פיספס משהו קריטי
+    """
+    url_lower = url.lower()
+    heuristic_score = 0.0
     
-    # בדיקת IP
-    has_ip = 1 if re.search(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', url) else 0
-    features.append(has_ip)
-
-    # מילות מפתח חשודות
-    suspicious_words = ['login', 'signin', 'bank', 'secure', 'account', 'update', 
-                        'verify', 'confirm', 'wallet', 'crypto', 'bonus', 'free']
-    features.append(sum(1 for word in suspicious_words if word in url))
+    # חוק 1: התחזות למותגים (הכי חשוב!)
+    # אם כתוב 'paypal' אבל הדומיין הוא לא paypal.com
+    high_risk_brands = ['paypal', 'google', 'facebook', 'apple', 'microsoft', 'bank']
     
-    # מותגים
-    brands = ['paypal', 'apple', 'google', 'microsoft', 'facebook', 'netflix', 'amazon']
-    features.append(sum(1 for brand in brands if brand in url))
-    
-    # סיומות קבצים מסוכנות
-    dangerous_ext = ['.exe', '.zip', '.tar', '.js', '.vbs', '.apk']
-    features.append(1 if any(ext in url for ext in dangerous_ext) else 0)
+    for brand in high_risk_brands:
+        if brand in url_lower:
+            # בדיקה פשוטה: אם המותג קיים, אבל הוא לא הדומיין הראשי
+            # (זה לא קוד מושלם אבל מספיק להאקתון)
+            if not (f"{brand}.com" in url_lower or f"{brand}.co.il" in url_lower):
+                heuristic_score = 0.95 # סיכון מיידי!
+                
+    # חוק 2: סיומות מסוכנות מאוד
+    dangerous_tlds = ['.xyz', '.top', '.win']
+    if any(url_lower.endswith(tld) for tld in dangerous_tlds):
+        if heuristic_score < 0.6:
+            heuristic_score = 0.6
+            
+    # אנחנו מחזירים את הגבוה מבין השניים: מה שהמודל חשב, או מה שהחוקים קבעו
+    return max(model_score, heuristic_score)
 
-    features.append(1 if 'https' in url else 0)
-    features.append(1 if 'www.' in url else 0)
-
-    return features
-
-# שמות העמודות (חובה שיהיה תואם למודל)
-feature_names = [
-    'len', 'dots', 'hyphens', 'at_symbol', 'percent', 'slashes', 
-    'digit_ratio', 'has_ip', 'sus_keywords', 'brands', 'is_file', 'is_https', 'has_www'
-]
-
-# --- הלוגיקה הראשית ---
+# --- 3. ראשי ---
 if __name__ == "__main__":
-    try:
-        if len(sys.argv) < 2:
-            print(json.dumps({"error": "No URL provided"}))
-            sys.exit(1)
+    if len(sys.argv) < 2:
+        print(0)
+        sys.exit()
 
-        url_to_scan = sys.argv[1]
-        
-        # נתיב למודל (נמצא באותה תיקייה)
-        model_path = os.path.join(os.path.dirname(__file__), "enhanced_url_classifier.json")
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(script_dir, 'enhanced_url_classifier.json') 
 
         if not os.path.exists(model_path):
-            print(json.dumps({"error": "Model file not found"}))
-            sys.exit(1)
+            print(0)
+            sys.exit()
 
-        # טעינת המודל
-        model = xgb.XGBClassifier()
+        # חיזוי המודל
+        model = xgb.Booster()
         model.load_model(model_path)
-
-        # חיזוי
-        features = extract_features(url_to_scan)
-        df = pd.DataFrame([features], columns=feature_names)
-
-        prediction = model.predict(df)[0]
-        probability = model.predict_proba(df)[0][1]
-
-        # החזרת JSON ל-Node.js
-        print(json.dumps({
-            "url": url_to_scan,
-            "is_malicious": int(prediction) == 1,
-            "risk_score": float(probability),
-            "status": "success"
-        }))
-
+        
+        input_url = sys.argv[1]
+        df = extract_features(input_url)
+        dmatrix = xgb.DMatrix(df)
+        
+        # הציון הגולמי של המודל
+        raw_score = float(model.predict(dmatrix)[0])
+        
+        # הציון המשוקלל עם החוקים שלנו
+        final_score = apply_heuristics(input_url, raw_score)
+        
+        # הדפסה (חשוב להדפיס רק את המספר הסופי!)
+        print(final_score)
+        
     except Exception as e:
-        print(json.dumps({"status": "error", "message": str(e)}))
+        # במקרה שגיאה נדפיס 0
+        sys.stderr.write(f"Error: {str(e)}")
+        print(0)
