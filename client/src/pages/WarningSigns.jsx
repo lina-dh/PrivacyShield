@@ -1,54 +1,73 @@
+import { Link } from "react-router-dom";
+
 /**
  * WarningSigns
- * - Static educational page about phishing/scam signals.
- * - This page supports the Link Scanner feature (users learn patterns + can consult AI).
+ * - Static educational page
+ * - Clean grid like the mock
  */
 export default function WarningSigns() {
   const signs = [
-    { title: "Urgency", desc: "“Do it NOW” pressure or threats." },
-    { title: "Too good to be true", desc: "Free prizes, gifts, money, etc." },
-    { title: "Short/hidden links", desc: "Shorteners that hide destination." },
-    {
-      title: "Weird domain",
-      desc: "Misspellings or extra words in the domain.",
-    },
-    {
-      title: "Login verification",
-      desc: "Asks you to sign in or verify codes.",
-    },
-    { title: "Personal info", desc: "Requests for phone/address/photos." },
+    { title: "Urgency", desc: "*Act now or lose access" },
+    { title: "Too good to be true", desc: "Free gifts, money, prizes" },
+    { title: "Strange links", desc: "Shortened or misspelled URLs" },
+    { title: "Unknown sender", desc: "New or suspicious account" },
   ];
 
   return (
-    <section className="space-y-8">
-      <header className="text-center">
-        <h1 className="text-4xl font-semibold tracking-tight">
-          Warning Signs (Phishing & Scams)
-        </h1>
-        <p className="mt-3 text-lg text-slate-600">
-          Most scams follow the same patterns.
-        </p>
-      </header>
+    <div className="relative">
+      <section className="space-y-8">
+        <Link
+          to="/"
+          className="inline-flex items-center text-sm font-medium text-slate-600 hover:text-slate-700 btn-animate"
+        >
+          ← Back to Home
+        </Link>
 
-      <div className="grid gap-6 md:grid-cols-3">
-        {signs.map((s) => (
-          <div
-            key={s.title}
-            className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-          >
-            <div className="text-xl font-semibold">{s.title}</div>
-            <p className="mt-2 text-sm text-slate-600">{s.desc}</p>
+        <header className="text-center">
+          <h1 className="text-4xl font-semibold tracking-tight text-slate-900">
+            Phishing Warning Signs
+          </h1>
+          <p className="mt-3 text-lg text-slate-600">
+            How to spot risky messages & links.
+          </p>
+        </header>
+
+        <div className="grid gap-6 md:grid-cols-2">
+          {signs.map((s, idx) => (
+            <div key={idx} className="glass-card p-6">
+              <div className="text-xl font-semibold text-slate-900">
+                {s.title}
+              </div>
+              <p className="mt-2 text-sm text-slate-600">{s.desc}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="glass-card p-6 flex items-center justify-between gap-4">
+          <div>
+            <div className="text-lg font-semibold text-slate-900">
+              AI Advice Chat
+            </div>
+            <p className="mt-1 text-sm text-slate-600">
+              Ask a question or paste a message — we’ll scan links safely.
+            </p>
           </div>
-        ))}
-      </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="text-lg font-semibold">Tip</div>
-        <p className="mt-2 text-slate-700">
-          If a message includes a link and you’re unsure, use{" "}
-          <span className="font-medium">Consult AI</span> before clicking.
-        </p>
-      </div>
-    </section>
+          <Link
+            to="/consult"
+            className="rounded-md bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 btn-animate"
+          >
+            Open →
+          </Link>
+        </div>
+      </section>
+
+      <Link to="/consult" className="ai-fab" aria-label="Open Consult AI">
+        <span className="ai-fab__robot" aria-hidden="true">
+          🤖
+        </span>
+        <span className="ai-fab__text">Consult AI</span>
+      </Link>
+    </div>
   );
 }

@@ -2,9 +2,7 @@ import { NavLink } from "react-router-dom";
 
 /**
  * Navbar Tabs (top navigation)
- * - Matches the clean minimal tab style from your last illustration.
- * - No big icons, just readable text.
- * - Easy to reorder or rename later by editing this array.
+ * - Rename / reorder here anytime
  */
 const TABS = [
   { to: "/", label: "Home" },
@@ -16,14 +14,15 @@ const TABS = [
 
 export default function Navbar() {
   return (
-    <header className="bg-white border-b border-slate-200">
+    <header className="bg-white/70 backdrop-blur border-b border-slate-200">
       <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-        {/* App name / logo area */}
-        <NavLink to="/" className="font-semibold text-lg tracking-tight">
+        <NavLink
+          to="/"
+          className="font-semibold text-lg tracking-tight text-slate-900"
+        >
           BeSafe
         </NavLink>
 
-        {/* Tabs */}
         <nav className="flex flex-wrap gap-2 text-sm">
           {TABS.map((t) => (
             <NavLink
@@ -31,10 +30,10 @@ export default function Navbar() {
               to={t.to}
               className={({ isActive }) =>
                 [
-                  "px-3 py-2 rounded-md transition",
-                  "hover:bg-slate-100",
+                  "px-3 py-2 rounded-md transition btn-animate",
+                  "hover:bg-slate-100/80",
                   isActive
-                    ? "bg-slate-100 text-slate-900 font-medium"
+                    ? "bg-slate-100/90 text-slate-900 font-medium"
                     : "text-slate-600",
                 ].join(" ")
               }
