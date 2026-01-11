@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Navbar from "./components/Navbar";
+import FloatingAI from "./components/FloatingAI";
 
 // Pages
 import HomePage from "./pages/HomePage";
@@ -8,21 +9,13 @@ import WarningSigns from "./pages/WarningSigns";
 import StaySafe from "./pages/StaySafe";
 import ConsultAI from "./pages/ConsultAI";
 
-/**
- * App.jsx
- * - All routing lives here.
- * - Navbar stays visible for every page.
- * - Main area is centered + consistent spacing (matches your mockup).
- */
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-        {/* Shared navigation */}
+      <div className="min-h-screen flex flex-col">
         <Navbar />
 
-        {/* Shared page container */}
-        <main className="flex-1 max-w-5xl mx-auto w-full px-6 py-10">
+        <main className="flex-1 max-w-7xl mx-auto px-4 py-8 w-full">
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/resources" element={<HelpResources />} />
@@ -32,12 +25,12 @@ export default function App() {
           </Routes>
         </main>
 
-        {/* Shared footer (optional) */}
-        <footer className="border-t border-slate-200 bg-white">
-          <div className="max-w-5xl mx-auto px-6 py-5 text-sm text-slate-500">
-            BeSafe · QueenB Hackathon · PrivacyShield
-          </div>
+        <footer className="text-center py-8 mt-8">
+          <span className="text-slate-600 font-medium">
+            BeSafe • QueenB Hackathon 2026
+          </span>
         </footer>
+        <FloatingAI />
       </div>
     </BrowserRouter>
   );
