@@ -105,10 +105,16 @@ export default function StaySafe() {
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">
+            <label
+              htmlFor="stay-safe-message"
+              className="block text-sm font-medium text-slate-700 mb-2"
+            >
               Paste the suspicious message here:
             </label>
             <textarea
+              id="stay-safe-message"
+              name="message"
+              aria-label="Suspicious message input"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               rows={5}
