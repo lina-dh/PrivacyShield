@@ -6,9 +6,13 @@ import consultIcon from "../assets/consult.png";
  * ConsultAI - Chat UI for safety advice
  * Using the logic from StaySafe (Q&A functionality)
  */
+import api from "../services/api";
+
 export default function ConsultAI() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const tips = [
     "Use strong, unique passwords for each account",
@@ -18,33 +22,42 @@ export default function ConsultAI() {
     "If pressured: pause, verify, ask a trusted adult",
   ];
 
-  function handleAsk() {
-    const q = question.toLowerCase();
-    if (!q.trim()) {
+  async function handleAsk() {
+    setError("");
+    setAnswer("");
+
+    const q = question.trim();
+    if (!q) {
       setAnswer("Please write a question first! 😊");
       return;
     }
-    if (q.includes("2fa") || q.includes("two factor")) {
-      setAnswer(
-        "Enable 2FA in account settings → security. Use authenticator apps like Google Authenticator instead of SMS when possible!"
-      );
-      return;
+
+    // Try server-side advisor API (falls back to mock mode on server if key missing)
+    try {
+      setLoading(true);
+      const resp = await api.post("/api/advisor/ask", {
+        message: q,
+        conversation: [],
+      });
+
+      if (resp?.data?.success && resp.data.response) {
+        setAnswer(resp.data.response);
+        setQuestion("");
+      } else if (resp?.data?.success && !resp.data.response) {
+        setAnswer(
+          "Sorry — the assistant didn't return a response. Please try again."
+        );
+      } else {
+        console.error("Advisor API error:", resp?.data);
+        setAnswer("Something went wrong. Please try again later.");
+      }
+    } catch (err) {
+      console.error("Advisor request failed:", err);
+      setError("Unable to reach the assistant. Please try again later.");
+      setAnswer("Something went wrong. Please try again later.");
+    } finally {
+      setLoading(false);
     }
-    if (q.includes("private") || q.includes("public")) {
-      setAnswer(
-        "Set your account to Private and review who can message/follow you. Check your privacy settings regularly!"
-      );
-      return;
-    }
-    if (q.includes("link") || q.includes("url")) {
-      setAnswer(
-        "Never click suspicious links! Use our StaySafe scanner to check messages before clicking anything."
-      );
-      return;
-    }
-    setAnswer(
-      "Safe default: pause, don't click unknown links, and verify through the official app/website. When in doubt, ask a trusted adult!"
-    );
   }
 
   return (
@@ -123,28 +136,67 @@ export default function ConsultAI() {
 
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-3">
+            <label htmlFor="consult-question" className="sr-only">
+              Ask a question
+            </label>
             <input
+              id="consult-question"
+              name="question"
+              aria-label="Ask a question"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               placeholder="Ask about privacy, 2FA, suspicious messages..."
               className="flex-1 px-4 py-3 rounded-xl bg-white/80 border border-slate-200 text-slate-800 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-400 focus:bg-white transition-all duration-200"
-              onKeyPress={(e) => e.key === "Enter" && handleAsk()}
+              onKeyDown={(e) => e.key === "Enter" && handleAsk()}
             />
             <button
               onClick={handleAsk}
-              className="px-6 py-3 bg-linear-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-xl btn-hover flex items-center gap-2"
+              disabled={loading}
+              aria-busy={loading}
+              className="px-6 py-3 bg-linear-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-xl btn-hover flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-              >
-                <path d="M2 2 L14 8 L2 14 L4 8 Z" />
-              </svg>
-              Ask AI
+              {loading ? (
+                <>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    className="animate-spin"
+                  >
+                    <circle
+                      cx="8"
+                      cy="8"
+                      r="6"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      fill="none"
+                      strokeDasharray="37.7"
+                      strokeDashoffset="37.7"
+                    ></circle>
+                  </svg>
+                  Thinking...
+                </>
+              ) : (
+                <>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                  >
+                    <path d="M2 2 L14 8 L2 14 L4 8 Z" />
+                  </svg>
+                  Ask AI
+                </>
+              )}
             </button>
           </div>
+
+          {error && (
+            <div className="bubble-card p-4 border-l-4 border-red-400 bg-red-50">
+              <p className="text-red-700">{error}</p>
+            </div>
+          )}
 
           {answer && (
             <div className="bubble-card p-4 border-l-4 border-purple-400">
