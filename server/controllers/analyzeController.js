@@ -1,374 +1,119 @@
-// הוספה חדשה: ספריות לניהול הרצת קובץ הפייתון
-import { spawn } from "child_process";
-import path from "path";
-import { fileURLToPath } from "url";
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-// הגדרת משתנים לזיהוי תיקיות (כי אנחנו ב-ES Modules)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// imports the OpenAI client so the backend can communicate with the OpenAI API
-import OpenAI from "openai";
-import {
-  SAFETY_SYSTEM_PROMPT,
-  LINK_SCANNER_JSON_SCHEMA_PROMPT,
-} from "../utils/prompts/analyzerPrompts.js";
-
-// --- helpers ---
-
-function detectLanguage(text) {
-  // Hebrew unicode range
-  return /[\u0590-\u05FF]/.test(text) ? "he" : "en";
-}
-
-// --- New Helper: Run XGBoost Model ---
-// פונקציה זו מריצה את הפייתון ומחזירה הבטחה (Promise) עם הציון
+// פונקציית העזר להרצת פייתון (סריקה)
 async function getRiskScoreFromModel(url) {
   return new Promise((resolve) => {
     try {
-      // 1. איתור קובץ הפייתון
-      // אנחנו עולים תיקייה אחת למעלה (..) ואז נכנסים ל-XGBOOST_model
-      const pythonScriptPath = path.join(__dirname, '..', '..', 'XGBOOST_model', 'predict.py');
-      
-      console.log(`Analyzing URL with XGBoost: ${url}`);
-      
-      // 2. הרצת התהליך
+      // נתיב: controllers -> server -> XGBOOST_model
+      const pythonScriptPath = path.join(__dirname, '..', 'XGBOOST_model', 'predict_server.py');
       const pythonProcess = spawn('python', [pythonScriptPath, url]);
-      
-      let resultData = "";
 
-      // 3. איסוף המידע שהפייתון מדפיס
+      let resultData = "";
       pythonProcess.stdout.on('data', (data) => {
         resultData += data.toString();
       });
 
-      pythonProcess.stderr.on('data', (data) => {
-        console.error(`Python Error: ${data}`);
-      });
-
-      // 4. סיום התהליך
       pythonProcess.on('close', (code) => {
         if (code !== 0) {
-          console.log("Model failed or crashed, defaulting to score 0");
-          resolve(0); // במקרה של שגיאה, נחזיר 0 ולא נתקע את התוכנה
-        } else {
-          // מנסים להמיר למספר
-          const score = parseFloat(resultData.trim());
-          // אם זה לא מספר (NaN) נחזיר 0
-          resolve(isNaN(score) ? 0 : score);
+          console.error("Python predict script exited with code", code);
+          resolve(0);
+          return;
         }
+        const score = parseFloat(resultData.trim());
+        resolve(isNaN(score) ? 0 : score);
       });
-    } catch (error) {
-      console.error("Error launching python model:", error);
-      resolve(0); // בכל מקרה של תקלה קריטית, נחזיר 0
+    } catch (err) {
+      console.error("Model Error:", err);
+      resolve(0);
     }
   });
 }
 
-const isMockMode = () =>
-  // checks if the OpenAI API key is missing or a placeholder
-  // if yes -> returns a fake response
-  !process.env.OPENAI_API_KEY ||
-  process.env.OPENAI_API_KEY.includes("your_key_here");
-
-// returns a mock JSON response for testing purposes
-const MOCK_JSON = (url) => ({
-  version: "1.0",
-  tool: "link_scanner",
-  input: { url },
-  result: {
-    verdict: "suspicious",
-    confidence: 75,
-    riskScore: 60,
-    reasons: [
-      "The link uses a shortener or hides its destination.",
-      "It looks like it may lead to a login/verification page.",
-    ],
-    detectedSignals: {
-      veryLongUrl: false,
-      manySpecialChars: false,
-      ipAddressInDomain: false,
-      looksLikeBrandImpersonation: false,
-      suspiciousTld: false,
-      shortenedUrl: true,
-    },
-  },
-  advice: {
-    summary: "This link looks suspicious. Avoid clicking until you verify it.",
-    twoQuickSteps: [
-      "Do not click. Ask the sender what it is and verify via the official app/site.",
-      "If you already clicked, change your password and turn on 2-factor authentication.",
-    ],
-  },
-  debug: { assumptions: [], missingInfo: [] },
-});
-
-// schema-valid response when no URL exists in the message
-const NO_URL_JSON = (lang) => ({
-  version: "1.0",
-  tool: "link_scanner",
-  input: { url: null },
-  result: {
-    verdict: "safe",
-    confidence: 100,
-    riskScore: 0,
-    reasons: [
-      lang === "he"
-        ? "לא נמצא קישור בהודעה."
-        : "No link was found in the message.",
-    ],
-    detectedSignals: {
-      veryLongUrl: false,
-      manySpecialChars: false,
-      ipAddressInDomain: false,
-      looksLikeBrandImpersonation: false,
-      suspiciousTld: false,
-      shortenedUrl: false,
-    },
-  },
-  advice: {
-    summary:
-      lang === "he"
-        ? "לא נמצא קישור לסריקה בהודעה."
-        : "No link detected to scan.",
-    twoQuickSteps: [
-      lang === "he"
-        ? "אם תקבלי קישור, הדביקי אותו כאן או שלחי את ההודעה שוב."
-        : "If you receive a link later, paste it here or resend the message.",
-      lang === "he"
-        ? "היזהרי מהודעות ממשתמשים לא מוכרים."
-        : "Be cautious with messages from unknown senders.",
-    ],
-  },
-  debug: { assumptions: [], missingInfo: [] },
-});
-
-function safeParseJson(text) {
-  const first = text.indexOf("{");
-  const last = text.lastIndexOf("}");
-  if (first === -1 || last === -1) throw new Error("No JSON found");
-  return JSON.parse(text.slice(first, last + 1));
-}
-
-// memory control: keeps only the last 10 messages from the conversation
-function trimConversation(conversation) {
-  if (!Array.isArray(conversation)) return [];
-  return conversation
-    .filter(
-      (m) =>
-        m &&
-        typeof m === "object" &&
-        ["user", "assistant"].includes(m.role) &&
-        typeof m.content === "string"
-    )
-    .slice(-10);
-}
-
-// extra safety: cap long message content (prevents huge payloads)
-function capMessageLengths(messages, maxLen = 2000) {
-  return messages.map((m) => ({
-    ...m,
-    content: m.content.length > maxLen ? m.content.slice(0, maxLen) : m.content,
-  }));
-}
-
-// extract URLs from a message (supports multiple links)
-function extractUrlsFromText(text) {
-  if (typeof text !== "string") return [];
-  // captures http(s) URLs until whitespace or quotes/brackets
-  const urlRegex = /https?:\/\/[^\s"'<>]+/g;
-  return text.match(urlRegex) || [];
-}
-
-// normalize & validate URL (soft validation)
-function normalizeAndValidateUrl(inputUrl) {
-  const raw = String(inputUrl ?? "").trim();
-
-  if (!raw) {
-    return { ok: false, status: 400, error: "No URL provided" };
-  }
-
-  const MAX_URL_LENGTH = 2048;
-  if (raw.length > MAX_URL_LENGTH) {
-    return {
-      ok: false,
-      status: 413,
-      error: `URL is too long (max ${MAX_URL_LENGTH} characters).`,
-    };
-  }
-
-  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-
-  try {
-    const parsed = new URL(withProtocol);
-    if (!parsed.hostname) throw new Error("Missing hostname");
-    return { ok: true, url: withProtocol };
-  } catch {
-    return {
-      ok: false,
-      status: 400,
-      error: "Invalid URL format. Please paste a valid link.",
-    };
-  }
-}
-
-// validate incoming MESSAGE (not URL)
-function normalizeAndValidateMessage(inputMessage) {
-  const msg = String(inputMessage ?? "").trim();
-
-  if (!msg) {
-    return { ok: false, status: 400, error: "No message provided" };
-  }
-
-  // Prevent extremely long message payloads
-  const MAX_MESSAGE_LENGTH = 5000;
-  if (msg.length > MAX_MESSAGE_LENGTH) {
-    return {
-      ok: false,
-      status: 413,
-      error: `Message is too long (max ${MAX_MESSAGE_LENGTH} characters).`,
-    };
-  }
-
-  return { ok: true, message: msg };
-}
-
-// Link Scanner controller (now receives a MESSAGE that contains URL(s))
+// פונקציית הסריקה הראשית
 export const analyzeLink = async (req, res) => {
   try {
-    const { message, conversation } = req.body;
-
-    // Validate incoming message
-    const msgCheck = normalizeAndValidateMessage(message);
-    if (!msgCheck.ok) {
-      return res.status(msgCheck.status).json({
-        success: false,
-        error: msgCheck.error,
-      });
+    const { message } = req.body;
+    if (!message) {
+      return res.status(400).json({ success: false, message: "No message provided" });
     }
-    const normalizedMessage = msgCheck.message;
 
-    // Extract URLs from the message
-    const urls = extractUrlsFromText(normalizedMessage);
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const urls = message.match(urlRegex);
 
-    // Detect language using conversation + message
-    const history = trimConversation(conversation);
-    const combinedUserText = [
-      ...history.filter((m) => m.role === "user").map((m) => m.content),
-      normalizedMessage,
-    ].join(" ");
-
-    const lang = detectLanguage(combinedUserText);
-
-    // If no URL found, return schema-valid safe response (no crash)
-    if (urls.length === 0) {
+    if (!urls) {
       return res.status(200).json({
         success: true,
-        data: NO_URL_JSON(lang),
+        data: { advice: { summary: "לא נמצא לינק לסריקה בהודעה." } }
       });
     }
 
-    // MVP: analyze the first URL
-    const urlToAnalyze = urls[0];
+    const targetUrl = urls[0];
+    const riskScore = await getRiskScoreFromModel(targetUrl);
 
-    // Validate URL before sending to AI
-    const urlCheck = normalizeAndValidateUrl(urlToAnalyze);
-    if (!urlCheck.ok) {
-      return res.status(urlCheck.status).json({
-        success: false,
-        error: urlCheck.error,
-      });
-    }
-    const normalizedUrl = urlCheck.url;
-
-    //Callong XGBOOST MODEL
-    let xgboostScore = 0;
-    // נדלג על זה אם אנחנו במצב Mock כדי לחסוך זמן פיתוח
-    if (!isMockMode()) { 
-        xgboostScore = await getRiskScoreFromModel(normalizedUrl);
-        console.log(`Final XGBoost Score for AI: ${xgboostScore}`);
-    }
-
-    // Mock mode returns JSON in the SAME SHAPE
-    if (isMockMode()) {
-      return res.status(200).json({
-        success: true,
-        data: MOCK_JSON(normalizedUrl),
-        isMock: true,
-      });
-    }
-
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-    let messages = [
-      { role: "system", content: SAFETY_SYSTEM_PROMPT },
-      { role: "system", content: LINK_SCANNER_JSON_SCHEMA_PROMPT },
-      {
-        role: "user",
-        content:
-          `The user pasted this message:\n` +
-          normalizedMessage +
-          `\n\nExtract the most relevant URL from it (already provided below) and analyze it.` +
-          `\nURL: ${normalizedUrl}` +
-          `\n\nEXTERNAL SECURITY MODEL SCORE: ${xgboostScore} (Scale 0-1, where 1 is highly malicious). Take this score into account for your verdict.` +
-          `\n\nReturn JSON only.`,
-      },
-      ...history,
-      {
-        role: "user",
-        content:
-          `The user pasted this message:\n` +
-          normalizedMessage +
-          `\n\nExtract the most relevant URL from it (already provided below) and analyze it.\nURL: ${normalizedUrl}\n\nReturn JSON only.`,
-      },
-    ];
-
-    messages = capMessageLengths(messages, 2000);
-
-    const response = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      messages,
-      temperature: 0.2,
-    });
-
-    const raw = response.choices?.[0]?.message?.content || "";
-    let parsed;
-
-    try {
-      parsed = safeParseJson(raw);
-    } catch {
-      // repair attempt
-      const repair = await openai.chat.completions.create({
-        model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-        messages: capMessageLengths(
-          [
-            { role: "system", content: SAFETY_SYSTEM_PROMPT },
-            { role: "system", content: LINK_SCANNER_JSON_SCHEMA_PROMPT },
-            {
-              role: "user",
-              content:
-                "Fix this into VALID JSON matching the schema EXACTLY. Output JSON only:\n\n" +
-                raw,
-            },
-          ],
-          2000
-        ),
-        temperature: 0,
-      });
-
-      const repairedRaw = repair.choices?.[0]?.message?.content || "";
-      parsed = safeParseJson(repairedRaw);
-    }
-
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
-      data: parsed,
+      data: {
+        input: { url: targetUrl },
+        result: {
+          riskScore: riskScore,
+          verdict: riskScore > 0.7 ? "Malicious" : riskScore > 0.4 ? "Suspicious" : "Safe",
+          reasons: riskScore > 0.5 ? ["דפוסי פישינג זוהו במודל", "סיומת דומיין חשודה"] : ["לא נמצאו איומים מיידיים"]
+        },
+        advice: {
+          summary: riskScore > 0.5 ? "זהירות! ה-AI זיהה שהלינק הזה עלול להיות מסוכן." : "הלינק נראה תקין, אך תמיד כדאי להיות עירניים."
+        }
+      }
     });
   } catch (error) {
-    console.error("OpenAI Error:", error.message);
-    return res.status(500).json({
-      success: false,
-      error: "AI analysis failed.",
+    console.error("Analyze error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// פונקציית הדיווח והאימון (החדשה)
+export const reportAndTrain = async (req, res) => {
+  const { url, isMalicious } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ success: false, message: "No URL provided" });
+  }
+
+  const label = isMalicious ? "1" : "0";
+  const pythonScriptPath = path.join(__dirname, '..', 'XGBOOST_model', 'retrain.py');
+
+  console.log(`Starting retraining for: ${url} with label ${label}`);
+
+  try {
+    const pythonProcess = spawn('Python', [pythonScriptPath, url, label]);
+    
+    let resultData = "";
+    pythonProcess.stdout.on('data', (data) => { resultData += data.toString(); });
+    
+    pythonProcess.stderr.on('data', (err) => { 
+      console.error(`Python Retrain Stderr: ${err}`); 
     });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        return res.status(500).json({ success: false, message: "Retrain script failed" });
+      }
+      
+      try {
+        const responseJson = JSON.parse(resultData);
+        return res.status(200).json({ success: true, data: responseJson });
+      } catch (parseError) {
+        // תיקון: הדפסת השגיאה כדי להשתמש במשתנה parseError
+        console.log("Model updated, notice:", parseError.message);
+        return res.status(200).json({ success: true, message: "המודל עודכן בהצלחה!" });
+      }
+    });
+  } catch (err) {
+    console.error("Retrain connection error:", err.message);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };

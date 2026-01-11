@@ -1,11 +1,13 @@
-import express from "express"; // Import the Express engine
-// Import the "recipe" we created in the controller
-import { analyzeLink } from "../controllers/analyzeController.js";
+import express from "express";
+// ייבוא שתי הפונקציות מהקונטרולר
+import { analyzeLink, reportAndTrain } from "../controllers/analyzeController.js";
 
-const router = express.Router(); // Create a new router (extension line)
+const router = express.Router();
 
-// Define the address: POST http://localhost:5000/api/analyze-model
-// We connect the address to the controller function
+// נתיב לסריקה רגילה
 router.post("/link-scanner/analyze", analyzeLink);
 
-export default router; // Export the router to the main server file
+// נתיב לדיווח ואימון המודל מחדש
+router.post("/link-scanner/report", reportAndTrain);
+
+export default router;
