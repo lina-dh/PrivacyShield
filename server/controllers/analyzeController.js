@@ -1,45 +1,73 @@
+import 'dotenv/config';
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import OpenAI from 'openai';
+import { getSystemPrompt, getUserPrompt } from '../utils/prompts/analyzerPrompts.js';
 
+// הגדרת __dirname ל־ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// פונקציית העזר להרצת פייתון (סריקה)
+// אתחול OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+/**
+ * פונקציית עזר: הרצת מודל XGBoost (Python)
+ * מחזירה מספר בין 0 ל־1
+ */
 async function getRiskScoreFromModel(url) {
   return new Promise((resolve) => {
-    try {
-      // נתיב: controllers -> server -> XGBOOST_model
-      const pythonScriptPath = path.join(__dirname, '..', 'XGBOOST_model', 'predict_server.py');
-      const pythonProcess = spawn('python', [pythonScriptPath, url]);
+    const pythonScriptPath = path.join(
+      __dirname,
+      '..',
+      'XGBOOST_model',
+      'predict_server.py'
+    );
 
-      let resultData = "";
-      pythonProcess.stdout.on('data', (data) => {
-        resultData += data.toString();
-      });
+    const pythonProcess = spawn('python', [pythonScriptPath, url]);
 
-      pythonProcess.on('close', (code) => {
-        if (code !== 0) {
-          console.error("Python predict script exited with code", code);
-          resolve(0);
-          return;
-        }
-        const score = parseFloat(resultData.trim());
-        resolve(isNaN(score) ? 0 : score);
-      });
-    } catch (err) {
-      console.error("Model Error:", err);
-      resolve(0);
-    }
+    let resultData = '';
+    let errorData = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      resultData += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      errorData += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (errorData) {
+        console.log('[Python logs]:\n', errorData);
+      }
+
+      if (code !== 0) {
+        console.error('Python script failed');
+        return resolve(0);
+      }
+
+      const score = parseFloat(resultData.trim());
+      resolve(Number.isNaN(score) ? 0 : score);
+    });
   });
 }
 
-// פונקציית הסריקה הראשית
+/**
+ * ניתוח לינק: XGBoost + LLM
+ */
 export const analyzeLink = async (req, res) => {
   try {
     const { message } = req.body;
+
     if (!message) {
-      return res.status(400).json({ success: false, message: "No message provided" });
+      return res.status(400).json({
+        success: false,
+        message: 'No message provided',
+      });
     }
 
     const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -48,72 +76,131 @@ export const analyzeLink = async (req, res) => {
     if (!urls) {
       return res.status(200).json({
         success: true,
-        data: { advice: { summary: "לא נמצא לינק לסריקה בהודעה." } }
+        data: {
+          advice: {
+            summary: 'לא זיהיתי לינק בהודעה. נסי להדביק כתובת מלאה.',
+          },
+          result: {
+            verdict: 'safe',
+            reasons: [],
+          },
+        },
       });
     }
 
     const targetUrl = urls[0];
-    const riskScore = await getRiskScoreFromModel(targetUrl);
 
-    res.status(200).json({
+    // --- שלב 1: XGBoost ---
+    const riskScore = await getRiskScoreFromModel(targetUrl);
+    const normalizedScore = Math.round(riskScore * 100);
+
+    // --- שלב 2: OpenAI Responses API ---
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      input: [
+        {
+          role: 'system',
+          content: getSystemPrompt(),
+        },
+        {
+          role: 'user',
+          content: getUserPrompt(targetUrl, normalizedScore),
+        },
+      ],
+    });
+
+    let outputText = response.output_text;
+
+// ניקוי עטיפת Markdown אם קיימת
+outputText = outputText
+  .replace(/```json\s*/i, '') // מסיר ```json אם יש
+  .replace(/```/g, '')        // מסיר ``` סגירה
+  .trim();                     // מסיר רווחים מיותרים
+
+let aiAnalysis;
+try {
+  aiAnalysis = JSON.parse(outputText);
+} catch  {
+  console.error('AI returned invalid JSON');
+  console.error('Raw output:', outputText);
+  throw new Error('AI response parsing failed');
+}
+
+    // --- שלב 3: החזרת תשובה לקליינט ---
+    return res.status(200).json({
       success: true,
       data: {
         input: { url: targetUrl },
         result: {
-          riskScore: riskScore,
-          verdict: riskScore > 0.7 ? "Malicious" : riskScore > 0.4 ? "Suspicious" : "Safe",
-          reasons: riskScore > 0.5 ? ["דפוסי פישינג זוהו במודל", "סיומת דומיין חשודה"] : ["לא נמצאו איומים מיידיים"]
+          riskScore: normalizedScore,
+          verdict: aiAnalysis.verdict,
+          reasons: aiAnalysis.reasons,
         },
         advice: {
-          summary: riskScore > 0.5 ? "זהירות! ה-AI זיהה שהלינק הזה עלול להיות מסוכן." : "הלינק נראה תקין, אך תמיד כדאי להיות עירניים."
-        }
-      }
+          summary: aiAnalysis.summary,
+          twoQuickSteps: aiAnalysis.twoQuickSteps,
+        },
+      },
     });
   } catch (error) {
-    console.error("Analyze error:", error.message);
-    res.status(500).json({ success: false, message: error.message });
+    console.error('Analyze Critical Error:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'שגיאה בניתוח ההודעה. נסי שוב בעוד רגע.',
+    });
   }
 };
 
-// פונקציית הדיווח והאימון (החדשה)
+/**
+ * דיווח ואימון מחדש
+ */
 export const reportAndTrain = async (req, res) => {
   const { url, isMalicious } = req.body;
 
   if (!url) {
-    return res.status(400).json({ success: false, message: "No URL provided" });
+    return res.status(400).json({
+      success: false,
+      message: 'No URL provided',
+    });
   }
 
-  const label = isMalicious ? "1" : "0";
-  const pythonScriptPath = path.join(__dirname, '..', 'XGBOOST_model', 'retrain.py');
+  const pythonScriptPath = path.join(
+    __dirname,
+    '..',
+    'XGBOOST_model',
+    'retrain.py'
+  );
 
-  console.log(`Starting retraining for: ${url} with label ${label}`);
+  const label = isMalicious ? '1' : '0';
 
   try {
-    const pythonProcess = spawn('Python', [pythonScriptPath, url, label]);
-    
-    let resultData = "";
-    pythonProcess.stdout.on('data', (data) => { resultData += data.toString(); });
-    
-    pythonProcess.stderr.on('data', (err) => { 
-      console.error(`Python Retrain Stderr: ${err}`); 
+    const pythonProcess = spawn('python', [
+      pythonScriptPath,
+      url,
+      label,
+    ]);
+
+    let resultData = '';
+    pythonProcess.stdout.on('data', (data) => {
+      resultData += data.toString();
     });
 
-    pythonProcess.on('close', (code) => {
-      if (code !== 0) {
-        return res.status(500).json({ success: false, message: "Retrain script failed" });
-      }
-      
+    pythonProcess.on('close', () => {
       try {
-        const responseJson = JSON.parse(resultData);
-        return res.status(200).json({ success: true, data: responseJson });
-      } catch (parseError) {
-        // תיקון: הדפסת השגיאה כדי להשתמש במשתנה parseError
-        console.log("Model updated, notice:", parseError.message);
-        return res.status(200).json({ success: true, message: "המודל עודכן בהצלחה!" });
+        const jsonRes = JSON.parse(resultData);
+        return res.status(200).json({ success: true, data: jsonRes });
+      } catch {
+        return res.status(200).json({
+          success: true,
+          message: 'הדיווח התקבל והמודל עודכן',
+        });
       }
     });
   } catch (err) {
-    console.error("Retrain connection error:", err.message);
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error('Retrain error:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error during retrain',
+    });
   }
 };
