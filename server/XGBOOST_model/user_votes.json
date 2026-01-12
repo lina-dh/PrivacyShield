@@ -1,0 +1,10 @@
+{
+  "https://gemini.google.com": {
+    "safe": 6,
+    "malicious": 0
+  },
+  "https://web.whatsapp.com": {
+    "safe": 1,
+    "malicious": 0
+  }
+}

@@ -92,7 +92,7 @@ export const analyzeLink = async (req, res) => {
 
     // --- שלב 1: XGBoost ---
     const riskScore = await getRiskScoreFromModel(targetUrl);
-    const normalizedScore = Math.round(riskScore * 100);
+   
 
     // --- שלב 2: OpenAI Responses API ---
     const response = await openai.responses.create({
@@ -104,7 +104,7 @@ export const analyzeLink = async (req, res) => {
         },
         {
           role: 'user',
-          content: getUserPrompt(targetUrl, normalizedScore),
+          content: getUserPrompt(targetUrl, riskScore),
         },
       ],
     });
@@ -132,7 +132,7 @@ try {
       data: {
         input: { url: targetUrl },
         result: {
-          riskScore: normalizedScore,
+          riskScore: riskScore,
           verdict: aiAnalysis.verdict,
           reasons: aiAnalysis.reasons,
         },
