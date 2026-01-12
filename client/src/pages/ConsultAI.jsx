@@ -1,104 +1,173 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import api from "../services/api";
 
 /**
- * ConsultAI (The Advisor)
- * - Allows users to ask general safety questions.
- * - Connects to: POST /api/advisor/ask
+ * ConsultAI (Chat Interface)
+ * רכיב המאפשר שיחה רציפה עם יועצת הבטיחות.
+ * מדמה ממשק צ'אט (כמו וואטסאפ) עם היסטוריה.
  */
 export default function ConsultAI() {
-  const [question, setQuestion] = useState("");
-  const [conversation, setConversation] = useState([]); 
-  const [answer, setAnswer] = useState("");
+  // State: שומר את מה שהמשתמש מקליד כרגע בתיבת הטקסט
+  const [currentInput, setCurrentInput] = useState("");
+  
+  // State: שומר את כל היסטוריית השיחה (מערך של הודעות)
+  // דוגמה למבנה: [{ role: 'user', content: 'היי' }, { role: 'assistant', content: 'שלום!' }]
+  const [messages, setMessages] = useState([]);
+  
+  // State: האם אנחנו מחכים לתשובה?
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  
+  // Ref: הפניה לסוף הצ'אט כדי שנוכל לגלול למטה אוטומטית כשיש הודעה חדשה
+  const messagesEndRef = useRef(null);
+
+  // פונקציה שגוללת למטה אוטומטית בכל פעם שההודעות משתנות
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, loading]); // רץ כשנוספת הודעה או כשהסטטוס טעינה משתנה
 
   async function handleAsk() {
-    if (!question.trim()) {
-      setError("Please write a question first.");
-      return;
-    }
-    setError("");
-    setAnswer("");
+    // 1. בדיקה שהמשתמש לא מנסה לשלוח הודעה ריקה
+    if (!currentInput.trim()) return;
+
+    // 2. יצירת אובייקט ההודעה החדשה של המשתמש
+    const newUserMessage = { role: "user", content: currentInput };
+
+    // 3. עדכון ה-UI *מיד* (כדי שהמשתמש יראה את ההודעה שלו עולה למסך)
+    // אנחנו יוצרים מערך חדש המכיל את כל מה שהיה קודם + ההודעה החדשה
+    const updatedMessages = [...messages, newUserMessage];
+    setMessages(updatedMessages);
+    
+    // 4. ניקוי שדה הקלט
+    setCurrentInput("");
     setLoading(true);
 
     try {
-      const nextConversation = [
-        ...conversation,
-        { role: "user", content: question }
-      ];
-
-      // שימי לב: זה הנתיב של היועצת
+      // 5. שליחת הבקשה לשרת
+      // אנחנו שולחים את ההודעה החדשה (message)
+      // ואת *ההיסטוריה הקודמת* (messages) כדי שהבוט ידע על מה דיברנו קודם
       const response = await api.post("/api/advisor/ask", {
-        message: question,
-        conversation: nextConversation 
+        message: newUserMessage.content,
+        conversation: messages // שולחים את ההיסטוריה *לפני* ההודעה הנוכחית (או כולל, תלוי איך השרת בנוי. כאן שלחנו את הישנה והשרת יצרף)
       });
 
       if (response.data.success) {
-        const aiResponse = response.data.response;
-        setAnswer(aiResponse);
-        setConversation([
-            ...nextConversation,
-            { role: "assistant", content: aiResponse }
-        ]);
+        // 6. קבלת התשובה והוספתה לצ'אט
+        const aiResponseContent = response.data.response;
+        const newAiMessage = { role: "assistant", content: aiResponseContent };
+
+        // עדכון המערך שוב: ההיסטוריה + תשובת ה-AI
+        setMessages((prev) => [...prev, newAiMessage]);
       } else {
-        setError("The advisor could not understand that. Try again?");
+        // טיפול במקרה שהשרת מחזיר שגיאה לוגית
+        setMessages((prev) => [
+            ...prev, 
+            { role: "assistant", content: "סליחה, הייתה בעיה בהבנת השאלה. נסי שוב?" }
+        ]);
       }
 
     } catch (err) {
       console.error("Advisor Error:", err);
-      setError("Something went wrong. Please check your connection.");
+      // הודעת שגיאה ידידותית בתוך הצ'אט
+      setMessages((prev) => [
+        ...prev, 
+        { role: "assistant", content: "אופס, יש בעיית תקשורת. בדקי את האינטרנט שלך." }
+      ]);
     } finally {
       setLoading(false);
     }
   }
 
+  // טיפול בלחיצה על Enter כדי לשלוח
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault(); // מניעת ירידת שורה
+      handleAsk();
+    }
+  };
+
   return (
-    <section className="space-y-8">
-      <header className="text-center">
-        <h1 className="text-4xl font-semibold tracking-tight text-purple-900">
+    <section className="flex flex-col h-[calc(100vh-100px)] max-w-4xl mx-auto p-4">
+      {/* כותרת */}
+      <header className="text-center mb-6">
+        <h1 className="text-3xl font-bold text-purple-900">
           BeSafe Advisor 👩‍💻
         </h1>
-        <p className="mt-3 text-lg text-slate-600">
-          Ask me anything about digital safety, privacy, or setting up your accounts.
+        <p className="text-slate-600">
+          היועצת האישית שלך לבטיחות ברשת. אפשר לשאול הכל!
         </p>
       </header>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="text-xl font-semibold text-slate-800">Ask a Question</div>
+      {/* אזור הצ'אט - המקום בו ההודעות מופיעות */}
+      <div className="flex-1 overflow-y-auto p-4 bg-white border border-slate-200 rounded-xl shadow-sm mb-4 space-y-4">
         
-        <div className="mt-4 flex flex-col gap-3">
-          <textarea
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            rows={3}
-            placeholder="e.g., How do I enable 2FA on Instagram? Is this password strong enough?"
-            className="w-full rounded-md border border-slate-200 bg-white px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-200"
-          />
-
-          {error && (
-             <div className="rounded-md bg-rose-50 p-3 text-sm text-rose-700 border border-rose-200">
-               {error}
-             </div>
-          )}
-
-          <button
-            onClick={handleAsk}
-            disabled={loading}
-            className="self-end rounded-md bg-purple-600 px-6 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition-colors btn-animate"
-          >
-            {loading ? "Thinking..." : "Ask Advisor"}
-          </button>
-        </div>
-
-        {answer && (
-          <div className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-            <div className="text-sm font-bold text-purple-900 mb-2">BeSafe Advisor says:</div>
-            <div className="rounded-lg border border-purple-100 bg-purple-50 p-4 text-slate-800 leading-relaxed whitespace-pre-line">
-              {answer}
-            </div>
+        {/* הודעת פתיחה דיפולטיבית אם אין הודעות */}
+        {messages.length === 0 && (
+          <div className="text-center text-slate-400 mt-10">
+            <p>היי! אני כאן לעזור. תוכלי לשאול אותי:</p>
+            <ul className="mt-2 text-sm list-disc list-inside">
+                <li>איך אני מחזקת את הסיסמה שלי?</li>
+                <li>מישהו מציק לי באינסטגרם, מה עושים?</li>
+                <li>איך בודקים אם הקישור הזה מסוכן?</li>
+            </ul>
           </div>
         )}
+
+        {/* לולאה שרצה על כל ההודעות ומציירת אותן */}
+        {messages.map((msg, index) => (
+          <div
+            key={index}
+            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
+            <div
+              dir="rtl"
+              className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line shadow-sm
+                ${msg.role === 'user' 
+                  ? 'bg-purple-600 text-white rounded-br-none' // עיצוב למשתמש (סגול כהה)
+                  : 'bg-purple-50 text-slate-800 border border-purple-100 rounded-bl-none' // עיצוב ל-AI (בהיר)
+                }`}
+            >
+              {msg.role === 'assistant' && <strong className="block mb-1 text-purple-900 font-semibold">BeSafe Advisor</strong>}
+              {msg.content}
+            </div>
+          </div>
+        ))}
+
+        {/* אינדיקציה שהבוט מקליד */}
+        {loading && (
+          <div className="flex justify-start">
+             <div className="bg-slate-100 text-slate-500 rounded-2xl px-4 py-3 text-sm animate-pulse">
+                מקלידה... 💬
+             </div>
+          </div>
+        )}
+        
+        {/* אלמנט בלתי נראה כדי לגלול אליו */}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* אזור הקלט - איפה שכותבים */}
+      <div className="flex gap-2">
+        <textarea
+          value={currentInput}
+          onChange={(e) => setCurrentInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          dir="rtl"
+          placeholder="כתבי כאן את השאלה שלך..."
+          className="flex-1 resize-none rounded-xl border border-slate-300 p-3 focus:outline-none focus:ring-2 focus:ring-purple-500 shadow-sm"
+          rows={1}
+          style={{ minHeight: '50px' }} // גובה התחלתי
+        />
+        <button
+          onClick={handleAsk}
+          disabled={loading || !currentInput.trim()}
+          className="bg-purple-600 hover:bg-purple-700 text-white px-6 rounded-xl font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+        >
+          {loading ? "..." : "שלח"}
+        </button>
       </div>
     </section>
   );
